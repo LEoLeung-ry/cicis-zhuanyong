@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>亚马逊关键词流量波动+天气记录 (Final Layout)</title>
+  <title>亚马逊关键词排名 vs 东京天气 (反向坐标修正版)</title>
 
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -51,7 +51,7 @@
 
   <div class="main-area">
     <div class="topbar">
-      <h1>亚马逊流量 vs 东京天气 (Tokyo Data)</h1>
+      <h1>亚马逊排名 vs 东京天气 (Tokyo Data)</h1>
       <button id="btnRefresh">刷新数据</button>
       <label>开始周:</label>
       <select id="startWeek"></select>
@@ -180,29 +180,27 @@
       const endIdx = labelsAll.indexOf(weeks[weeks.length-1]);
       const sliceW = (arr) => arr.slice(startIdx, endIdx + 1);
 
-      // === 修改点: 样式调整 ===
+      // === 天气数据 ===
       
-      // 1. 最高气温 (红虚线)
+      // 1. 最高气温
       dsList.push({
         label: "最高气温", data: sliceW(weatherData.max),
-        borderColor: "rgba(231, 76, 60, 1.0)", // 不透明红
+        borderColor: "rgba(231, 76, 60, 1.0)",
         borderWidth: 2, borderDash: [8, 4],
         pointRadius: 0, fill: false, tension: 0.4,
         yAxisID: "yTemp"
       });
 
-      // 2. 平均气温 (橙色虚线 - 已修正!)
+      // 2. 平均气温
       dsList.push({
         label: "平均气温", data: sliceW(weatherData.avg),
-        borderColor: "rgba(255, 159, 64, 1.0)", // 纯橙色
-        borderWidth: 2, borderDash: [6, 3], // 虚线
-        pointRadius: 0, 
-        fill: false, // 去掉填充!
-        tension: 0.4, 
+        borderColor: "rgba(255, 159, 64, 1.0)",
+        borderWidth: 2, borderDash: [6, 3],
+        pointRadius: 0, fill: false, tension: 0.4, 
         yAxisID: "yTemp"
       });
 
-      // 3. 最小湿度 (蓝虚线)
+      // 3. 最小湿度
       dsList.push({
         label: "最小湿度(%)", data: sliceW(weatherData.hum),
         borderColor: "rgba(52, 152, 219, 0.8)", borderWidth: 2, borderDash: [10, 5],
@@ -221,23 +219,21 @@
           scales: {
             x: { title: { display: true, text: "日期 (Date)" }, grid: { display: false } },
             
-            // === 修改点: 坐标轴大清洗 ===
-            
-            // 隐藏的流量轴 (保留逻辑，隐藏显示)
+            // === 核心修正点: 排名轴反转 ===
             yTraffic: {
-              display: false, // 隐藏轴线和刻度!
+              display: false, // 隐藏轴线，减少视觉干扰
               position: 'left',
-              // reverse: true, // 如果您看排名需要反转，请取消注释
+              reverse: true, // <--- 关键！开启反转：1在顶部，100在底部
             },
 
-            // 左轴：气温 (替代左侧)
+            // 气温轴 (保持正常: 数值越大越高)
             yTemp: {
               type: 'linear', display: true, position: 'left',
               title: { display: true, text: "气温 (°C)", color: "#c0392b" },
               ticks: { color: "#c0392b" }
             },
             
-            // 右轴：湿度
+            // 湿度轴 (保持正常)
             yHum: {
               type: 'linear', display: true, position: 'right',
               title: { display: true, text: "湿度 (%)", color: "#2980b9" },
@@ -256,7 +252,8 @@
                   let val = ctx.parsed.y;
                   if (lbl.includes("气温")) return `${lbl}: ${val}°C`;
                   if (lbl.includes("湿度")) return `${lbl}: ${val}%`;
-                  return `${lbl}: ${val}`;
+                  // 排名显示修正
+                  return `${lbl}: 第 ${val} 名`; 
                 }
               }
             }
@@ -286,13 +283,23 @@
         summary.innerHTML = `<span>${grp}</span> <span><button onclick="setGroupCheck('${grp}', true, event)">全选</button><button onclick="setGroupCheck('${grp}', false, event)">全不选</button></span>`;
         details.appendChild(summary);
         const kwMap = gData[grp];
+        
+        // 修正侧边栏排序逻辑：排名(值)越小越好，所以按升序排(小的在前)，
+        // 但如果您想把 "最好的排名" 放在列表最上面，按升序排是对的 (1, 2, 10...)
         let kwArray = Object.keys(kwMap).map(kw => ({ kw, latestVal: getLatestValue(kwMap[kw]), arr: kwMap[kw] }));
-        kwArray.sort((a, b) => (b.latestVal || 0) - (a.latestVal || 0));
+        
+        // 此处调整：数值越小(排名越靠前)排在列表上面
+        kwArray.sort((a, b) => {
+            let va = isNaN(a.latestVal) ? 999999 : a.latestVal;
+            let vb = isNaN(b.latestVal) ? 999999 : b.latestVal;
+            return va - vb; // 升序排列
+        });
+
         kwArray.forEach(obj => {
           const lb = document.createElement("label"); const cb = document.createElement("input");
           cb.type = "checkbox"; cb.checked = true; cb.dataset.group = grp; cb.dataset.keyword = obj.kw;
           let valText = isNaN(obj.latestVal) ? "-" : obj.latestVal;
-          lb.appendChild(cb); lb.append(` ${obj.kw} (${valText})`);
+          lb.appendChild(cb); lb.append(` ${obj.kw} (Rank: ${valText})`);
           details.appendChild(lb);
         });
         container.appendChild(details);
