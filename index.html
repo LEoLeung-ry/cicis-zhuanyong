@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>亚马逊关键词趋势 vs 天气 (深度复盘版)</title>
+  <title>亚马逊关键词趋势 vs 天气 (动态刻度版)</title>
 
   <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
   <style>
-    /* === 样式与之前保持一致，微调了Tooltip字体优化阅读 === */
+    /* === 样式保持不变 === */
     html, body { margin: 0; padding: 0; height: 100%; font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; overflow: hidden; }
     
     .sidebar-toggle { position: fixed; left: 0; top: 0; background: #232f3e; color: #fff; padding: 10px 15px; border: none; cursor: pointer; z-index: 9999; font-size: 16px; border-bottom-right-radius: 4px; }
@@ -73,7 +73,7 @@
 
   <div class="main-area">
     <div class="topbar">
-      <h1>🇯🇵 亚马逊流量天气罗盘 (深度复盘版)</h1>
+      <h1>🇯🇵 亚马逊流量天气罗盘 (动态刻度版)</h1>
       
       <div class="control-group">
         <label>开始:</label>
@@ -197,9 +197,10 @@
     }
 
     /***************************************************************
-     * 5) 核心: 创建/更新图表 (包含您定制的 Tooltip)
+     * 5) 核心: 创建/更新图表
+     * [修改点]: 接收 minVal 和 maxVal 来动态设置 Y 轴
      ***************************************************************/
-    function createChart(weeks, dsList) {
+    function createChart(weeks, dsList, minVal, maxVal) {
       const ctx = document.getElementById("myChart").getContext("2d");
       if (chart) chart.destroy();
 
@@ -207,9 +208,7 @@
       const endIdx = labelsAll.indexOf(weeks[weeks.length-1]);
       const sliceW = (arr) => arr.slice(startIdx, endIdx + 1);
 
-      // --- 气象数据集 (保持整洁，不画去年的气象线，但在 Tooltip 里显示) ---
-      
-      // 1. 最高气温
+      // --- 气象数据集 ---
       dsList.push({
         label: "最高气温", 
         data: sliceW(weatherData.max),
@@ -223,7 +222,6 @@
         order: 99 
       });
 
-      // 2. 平均气温
       dsList.push({
         label: "平均气温", 
         data: sliceW(weatherData.avg),
@@ -237,7 +235,6 @@
         order: 99
       });
 
-      // 3. 最小湿度
       dsList.push({
         label: "最小湿度(%)", 
         data: sliceW(weatherData.hum),
@@ -253,6 +250,19 @@
 
       const formattedLabels = weeks.map(w => w.split("_Week_")[0].replace(/_/g, "-"));
 
+      // === 动态计算 Y 轴范围 ===
+      // 如果没有数据，默认 1-100
+      let yMin = 1;
+      let yMax = 100;
+      
+      if (minVal !== undefined && maxVal !== undefined && !isNaN(minVal) && !isNaN(maxVal)) {
+          // 排名越小越好 (1是最好)，所以 minVal 是图表顶部，maxVal 是底部
+          // 给顶部留一点空间 (比如 最小值 * 0.8)，不能小于 1
+          yMin = Math.floor(Math.max(1, minVal * 0.8));
+          // 给底部留一点空间 (比如 最大值 * 1.1)
+          yMax = Math.ceil(maxVal * 1.1);
+      }
+
       chart = new Chart(ctx, {
         type: "line",
         data: { labels: formattedLabels, datasets: dsList },
@@ -261,14 +271,22 @@
           interaction: { mode: 'index', intersect: false },
           scales: {
             x: { title: { display: true, text: "周 (Date)" }, grid: { display: false } },
-            yTraffic: { display: false, position: 'left', reverse: true }, // 排名反转
+            
+            // === 核心修改: 排名轴动态范围 ===
+            yTraffic: { 
+                display: false, // 隐藏刻度
+                position: 'left', 
+                reverse: true,  // 翻转：数值小(排名好)在上面
+                min: yMin,      // 动态最小值
+                max: yMax       // 动态最大值
+            },
+
             yTemp: { type: 'linear', display: true, position: 'left', title: { display: true, text: "气温 (°C)", color: "#c0392b" }, ticks: { color: "#c0392b" } },
             yHum: { type: 'linear', display: true, position: 'right', title: { display: true, text: "湿度 (%)", color: "#2980b9" }, grid: { drawOnChartArea: false }, ticks: { color: "#2980b9", callback: v => v + "%" }, min: 0, max: 100 }
           },
           plugins: {
             legend: { position: 'top', labels: { usePointStyle: true, boxWidth: 6 } },
             
-            // === ✨ 核心定制：Tooltip (悬浮框) ===
             tooltip: {
               backgroundColor: 'rgba(0, 0, 0, 0.85)',
               titleFont: { size: 14, weight: 'bold' },
@@ -276,66 +294,53 @@
               padding: 12,
               cornerRadius: 6,
               callbacks: {
-                // 1. 标题：显示 "本周 (去年: 对应周)"
                 title: function(context) {
                     let currentLabel = context[0].label; 
-                    // 从 labelsAll 中获取 52 周前的日期字符串
-                    let currentIndex = startIdx + context[0].dataIndex; // 注意：要加上 startIdx 因为图表是被截取过的
+                    let currentIndex = startIdx + context[0].dataIndex;
                     let pastIndex = currentIndex - 52;
-                    
                     let title = currentLabel;
-                    // 如果能找到 52 周前的数据
                     if (pastIndex >= 0 && labelsAll[pastIndex]) {
                         let pastLabelRaw = labelsAll[pastIndex];
-                        // 简单格式化：去掉 _Week_ 变成 2024-09-08
                         let pastLabel = pastLabelRaw.split("_Week_")[0].replace(/_/g, "-");
                         title += ` (去年同期: ${pastLabel})`;
                     }
                     return title;
                 },
-                
-                // 2. 标签内容：气温和湿度加上 YoY 对比
                 label: function(ctx) {
                     let lbl = ctx.dataset.label || "";
                     let val = ctx.parsed.y;
-                    
-                    // 计算对应的历史索引
                     let currentRealIndex = startIdx + ctx.dataIndex;
                     let pastRealIndex = currentRealIndex - 52;
 
-                    // 辅助函数：安全获取历史数据
                     const getPastVal = (arr) => {
-                        if (pastRealIndex >= 0 && arr[pastRealIndex] !== undefined && !isNaN(arr[pastRealIndex])) {
-                            return arr[pastRealIndex];
-                        }
+                        if (pastRealIndex >= 0 && arr[pastRealIndex] !== undefined && !isNaN(arr[pastRealIndex])) return arr[pastRealIndex];
                         return null;
                     };
 
-                    // A. 最高气温
                     if (lbl.includes("最高气温")) {
                         let past = getPastVal(weatherData.max);
-                        let suffix = past !== null ? ` (去年: ${past}°C)` : "";
-                        return `最高气温: ${val}°C${suffix}`;
+                        return `最高气温: ${val}°C${past !== null ? ` (去年: ${past}°C)` : ""}`;
                     }
-                    
-                    // B. 平均气温
                     if (lbl.includes("平均气温")) {
                         let past = getPastVal(weatherData.avg);
-                        let suffix = past !== null ? ` (去年: ${past}°C)` : "";
-                        return `平均气温: ${val}°C${suffix}`;
+                        return `平均气温: ${val}°C${past !== null ? ` (去年: ${past}°C)` : ""}`;
                     }
-                    
-                    // C. 最小湿度
                     if (lbl.includes("最小湿度")) {
                         let past = getPastVal(weatherData.hum);
-                        let suffix = past !== null ? ` (去年: ${past}%)` : "";
-                        return `最小湿度: ${val}%${suffix}`;
+                        return `最小湿度: ${val}%${past !== null ? ` (去年: ${past}%)` : ""}`;
                     }
 
-                    // D. 排名数据 (包含去年的虚线)
-                    if (lbl.includes("(去年)")) {
-                         return `${lbl}: 第 ${val} 名`;
+                    // === 排名数据 Tooltip ===
+                    // 这里我们通过 dataset 中附加的 extra 信息来查历史数据
+                    let groupName = ctx.dataset.groupName;
+                    let keywordName = ctx.dataset.keywordName;
+                    
+                    if (groupName && keywordName && globalGroupsRaw[groupName] && globalGroupsRaw[groupName][keywordName]) {
+                        let pastRank = getPastVal(globalGroupsRaw[groupName][keywordName]);
+                        let pastText = pastRank !== null ? ` (去年: 第 ${pastRank} 名)` : "";
+                        return `${lbl}: 第 ${val} 名${pastText}`;
                     }
+                    
                     return `${lbl}: 第 ${val} 名`;
                 }
               }
@@ -346,7 +351,8 @@
     }
 
     /***************************************************************
-     * 6) 核心逻辑: updateVisibleLines (含 52周回溯逻辑)
+     * 6) 核心逻辑: updateVisibleLines
+     * [修改点]: 1. 移除去年虚线; 2. 计算当前数据的最大最小值
      ***************************************************************/
     function updateVisibleLines() {
       const cbs = document.querySelectorAll('#groupContainer input:checked');
@@ -359,13 +365,8 @@
       const start = Math.min(sIdx, eIdx);
       const end = Math.max(sIdx, eIdx);
 
-      // 辅助函数: 获取 52 周前的数据
-      function getLastYearValue(fullDataArray, currentIndex) {
-        const lookBack = 52; 
-        const targetIndex = currentIndex - lookBack;
-        if (targetIndex >= 0 && targetIndex < fullDataArray.length) return fullDataArray[targetIndex];
-        return null;
-      }
+      // 用来收集所有可见数据点的数组，用于计算 Min/Max
+      let allVisibleValues = [];
 
       cbs.forEach(cb => {
         const grp = cb.dataset.group;
@@ -375,35 +376,41 @@
         // 今年数据
         const currentSlice = rawFull.slice(start, end + 1);
         
-        // 去年同期数据
-        const lastYearSlice = [];
-        for (let k = start; k <= end; k++) lastYearSlice.push(getLastYearValue(rawFull, k));
+        // 收集有效数值用于缩放
+        currentSlice.forEach(v => {
+            if (v !== null && !isNaN(v)) {
+                allVisibleValues.push(v);
+            }
+        });
 
         const color = colors[i % colors.length];
 
-        // 实线 (今年)
+        // 只添加实线 (今年)，并附加 groupName 和 keywordName 供 Tooltip 使用
         dsList.push({
           label: kw, 
           data: currentSlice,
           borderColor: color, backgroundColor: color,
           borderWidth: 2, fill: false, tension: 0.2, pointRadius: 3,
-          yAxisID: "yTraffic", order: 1
+          yAxisID: "yTraffic", order: 1,
+          // === 关键：把元数据存进去，供 Tooltip 查历史 ===
+          groupName: grp,
+          keywordName: kw
         });
 
-        // 虚线 (去年)
-        const hasData = lastYearSlice.some(v => v !== null && !isNaN(v));
-        if (hasData) {
-            dsList.push({
-              label: kw + " (去年)", 
-              data: lastYearSlice,
-              borderColor: color, borderWidth: 1.5, borderDash: [5, 5],
-              pointRadius: 0, fill: false, tension: 0.2,
-              yAxisID: "yTraffic", spanGaps: true, order: 2, opacity: 0.6
-            });
-        }
+        // [已删除]: 去年的虚线代码块被移除了
+        
         i++;
       });
-      createChart(labelsAll.slice(start, end + 1), dsList);
+
+      // 计算当前可见数据的最大最小值
+      let minVal, maxVal;
+      if (allVisibleValues.length > 0) {
+          minVal = Math.min(...allVisibleValues);
+          maxVal = Math.max(...allVisibleValues);
+      }
+
+      // 重新生成图表，传入 min/max
+      createChart(labelsAll.slice(start, end + 1), dsList, minVal, maxVal);
     }
 
     /***************************************************************
@@ -432,7 +439,6 @@
         
         const kwMap = gData[grp];
         let kwArray = Object.keys(kwMap).map(kw => ({ kw, latestVal: getLatestValue(kwMap[kw]) }));
-        // 排名越小越靠前
         kwArray.sort((a, b) => {
             let va = isNaN(a.latestVal) ? 999999 : a.latestVal;
             let vb = isNaN(b.latestVal) ? 999999 : b.latestVal;
